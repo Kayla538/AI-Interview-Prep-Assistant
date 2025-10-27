@@ -1,0 +1,7 @@
+{
+  "name": "AI Interview Prep Assistant",
+  "description": "An application that listens to an interviewer's question, and using your provided professional experience, generates a tailored answer to help you ace your next interview.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
