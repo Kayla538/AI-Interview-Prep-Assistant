@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { generateAnswer } from './services/geminiService';
+import { generateAnswerStream } from './services/geminiService';
 import { MicrophoneIcon, SparklesIcon, ExclamationTriangleIcon } from './components/Icons';
 
 // Helper to check for SpeechRecognition API
@@ -40,8 +40,13 @@ const App: React.FC = () => {
         setGeneratedAnswer('');
 
         try {
-            const answer = await generateAnswer(userExperience, question);
-            setGeneratedAnswer(answer);
+            await generateAnswerStream(
+                userExperience,
+                question,
+                (chunk: string) => {
+                    setGeneratedAnswer(prev => prev + chunk);
+                }
+            );
         } catch (err) {
             setError(err instanceof Error ? err.message : 'An unknown error occurred.');
         } finally {
@@ -122,12 +127,12 @@ const App: React.FC = () => {
             <div className="max-w-4xl mx-auto">
                 <header className="text-center mb-8">
                     <h1 className="text-4xl sm:text-5xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-cyan-400">
-                        AI Interview Prep Assistant
+                        AI Story Co-Pilot
                     </h1>
                     <p className="text-slate-400 mt-2">
                         {currentScreen === 'experience' 
-                            ? 'Get tailored interview answers based on your unique experience.'
-                            : 'Your personal co-pilot for acing interviews.'}
+                            ? 'Turn your experience into compelling interview stories.'
+                            : 'Listening for a question to build your story around.'}
                     </p>
                 </header>
 
@@ -142,7 +147,7 @@ const App: React.FC = () => {
                                     id="experience"
                                     value={userExperience}
                                     onChange={(e) => setUserExperience(e.target.value)}
-                                    placeholder="Paste your resume, job descriptions, or key skills here..."
+                                    placeholder="Paste your resume, job descriptions, or key skills here... These are the facts for your story."
                                     className="w-full h-72 p-4 bg-slate-900 border border-slate-600 rounded-md focus:ring-2 focus:ring-cyan-500 focus:outline-none transition-shadow resize-y"
                                     aria-label="Paste your experience here"
                                 />
@@ -206,17 +211,17 @@ const App: React.FC = () => {
                             <div className={`min-h-[20rem] flex flex-col bg-slate-800 rounded-lg p-4 border shadow-lg transition-all duration-500 ${!isLoading && generatedAnswer ? 'border-purple-500/70 shadow-purple-500/30' : 'border-slate-700'}`}>
                                 <label className="block text-sm font-semibold text-slate-400 mb-2 flex items-center gap-2 flex-shrink-0">
                                     <SparklesIcon className="text-purple-400"/>
-                                    Suggested Answer:
+                                    Suggested Story:
                                 </label>
                                 <div className="flex-grow w-full text-slate-300 overflow-y-auto p-2 whitespace-pre-wrap">
-                                    {isLoading && (
+                                    {isLoading && !generatedAnswer && (
                                         <div className="flex items-center gap-3 text-cyan-300">
                                             <SparklesIcon className="animate-spin w-5 h-5" />
-                                            <p>Generating your tailored answer...</p>
+                                            <p>Crafting your story...</p>
                                         </div>
                                     )}
-                                    {generatedAnswer && <div dangerouslySetInnerHTML={{ __html: generatedAnswer.replace(/\n/g, '<br />') }} />}
-                                    {!isLoading && !generatedAnswer && <span className="text-slate-500">Your suggested answer will appear here...</span>}
+                                    {generatedAnswer}
+                                    {!isLoading && !generatedAnswer && <span className="text-slate-500">Your suggested story will appear here...</span>}
                                 </div>
                             </div>
 

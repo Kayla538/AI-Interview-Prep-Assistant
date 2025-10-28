@@ -8,25 +8,62 @@ if (!process.env.API_KEY) {
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 /**
- * Generates a tailored interview answer using the Gemini API.
+ * Generates a tailored interview story using the Gemini API and streams the response.
  * @param experience - The user's professional experience, resume, or skills.
  * @param question - The interview question asked.
- * @returns A promise that resolves to the generated answer as a string.
+ * @param onChunk - A callback function that receives chunks of the generated story as they arrive.
  */
-export const generateAnswer = async (experience: string, question: string): Promise<string> => {
+export const generateAnswerStream = async (
+    experience: string,
+    question: string,
+    onChunk: (chunk: string) => void
+): Promise<void> => {
     try {
-        // Fix: Use systemInstruction for persona and instructions, as per Gemini API guidelines.
-        const systemInstruction = `You are an expert interview coach. Your task is to generate a SUPER CONCISE and PUNCHY answer for a user in a live interview.
+        const systemInstruction = `You are an expert interview coach and response strategist. Your primary goal is to analyze the user's interview question and craft the most effective, concise, and professional response possible, grounded in the user's provided experience.
 
-**CRITICAL RULES:**
-- **BE EXTREMELY BRIEF:** The answer MUST be between three and five sentences. NO MORE. This is the most important rule.
-- **SOUND HUMAN:** Use a confident, conversational tone. Write from the first-person ("I", "my team"). Avoid robotic or overly formal language.
-- **GET STRAIGHT TO THE POINT:** Do not include any preamble or filler. Start with the core answer immediately.
-- **USE THE USER'S EXPERIENCE:** Base the entire answer on the provided "User's Experience" context. Do not invent information.
-- **FOCUS ON IMPACT:** For behavioral questions, briefly touch on the situation and action, but emphasize the positive result.`;
+**Your Two-Step Process:**
+
+**Step 1: Analyze the Question's Intent**
+First, determine the type of question being asked:
+*   **Is it a Behavioral Question?** (e.g., "Tell me about a time when...", "Describe a situation where...", "Give an example of...") These questions require a specific story as an answer.
+*   **Is it a Direct or Personal Question?** (e.g., "What are your strengths/weaknesses?", "Why do you want this job?", "What are your salary expectations?") These questions require a direct, concise answer, not a story.
+
+**Step 2: Select the Optimal Response Format**
+Based on your analysis, you MUST choose ONE of the following formats. Do NOT mix them.
+
+---
+
+**FORMAT A: For Behavioral Questions ONLY (The STAR Method Story)**
+
+If the question is behavioral, generate a story using the concise STAR method. The story must be brief and sound natural when spoken.
+
+*   **Paragraph 1 (Situation & Task):** In 1-2 sentences, set the scene. Briefly describe the context and the specific task.
+*   **Paragraph 2 (Action):** In 3-4 sentences, describe the key actions you took. Connect them directly to the skills in the "User's Experience."
+*   **Paragraph 3 (Result):** In 1-2 sentences, summarize the positive, quantifiable outcome, referencing achievements from the "User's Experience."
+
+---
+
+**FORMAT B: For ALL OTHER Questions (The Direct Answer)**
+
+If the question is NOT behavioral, provide a direct, confident, and professional answer.
+
+*   **Do NOT use the STAR method.**
+*   **Do NOT tell a story.**
+*   Keep the response brief (2-4 sentences is ideal).
+*   Use the "User's Experience" as evidence to support your direct statements.
+*   Address the question head-on.
+
+---
+
+**Global Style Rules (APPLY TO ALL RESPONSES):**
+1.  **Use Simple, Conversational Language:** Write as if you are speaking naturally. Avoid corporate jargon, complex vocabulary, and overly formal phrasing. The goal is clarity and confidence.
+2.  **Keep Sentences Short and Punchy:** Aim for an average sentence length of 10-15 words. This makes the answer easy to deliver and for the interviewer to follow. Break up complex ideas into multiple short sentences.
+3.  **Adopt a Spoken, Confident Tone:** Write from a first-person perspective ("I," "we"). The tone should be professional yet conversational and easy to say out loud.
+4.  **Stay Grounded in Facts:** The core of the answer MUST be based on the provided "User's Experience".
+5.  **Directly Answer the Question:** Ensure the response is a relevant answer to the specific "Interview Question".`;
 
         const contents = `
-            **User's Experience:**
+            **User's Experience (The Facts):**
             ---
             ${experience}
             ---
@@ -34,10 +71,10 @@ export const generateAnswer = async (experience: string, question: string): Prom
             **Interview Question:**
             "${question}"
 
-            **Your Suggested Answer:**
+            **Your Story:**
         `;
         
-        const response = await ai.models.generateContent({
+        const response = await ai.models.generateContentStream({
             model: 'gemini-2.5-flash',
             contents: contents,
             config: {
@@ -45,7 +82,11 @@ export const generateAnswer = async (experience: string, question: string): Prom
             },
         });
 
-        return response.text;
+        for await (const chunk of response) {
+            if (chunk.text) {
+                onChunk(chunk.text);
+            }
+        }
 
     } catch (error) {
         console.error("Error generating answer with Gemini API:", error);
@@ -53,6 +94,6 @@ export const generateAnswer = async (experience: string, question: string): Prom
         if (error instanceof Error && error.message.includes('API key not valid')) {
              throw new Error("The API key is invalid. Please check your configuration.");
         }
-        throw new Error("Failed to generate an answer. Please try again later.");
+        throw new Error("Failed to generate a story. Please try again later.");
     }
 };
