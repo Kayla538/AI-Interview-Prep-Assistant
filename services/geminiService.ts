@@ -46,7 +46,13 @@ Your single most important directive is this: You must understand the difference
 **Critical Style Directives:**
 *   **BE DETAILED:** Your answer should be a full paragraph or two. Do not give short summaries.
 *   **CONFIDENT, FIRST-PERSON TONE:** Write as the user ("I," "we," "my team").
-*   **CREATIVE BUT GROUNDED:** Your invented mini-story must be plausible. The Primary Achievements and Foundational Skills must come from the user's text. The connection between them is what you invent.`;
+*   **CREATIVE BUT GROUNDED:** Your invented mini-story must be plausible. The Primary Achievements and Foundational Skills must come from the user's text. The connection between them is what you invent.
+
+**Conversational Style Guide (Absolutely Mandatory):**
+*   **Speak, Don't Write:** The final output must sound like a real person talking, not a written essay. Use contractions (like "I'm," "don't," "it's").
+*   **Simple & Direct Language:** Avoid complex vocabulary, corporate jargon, and overly long sentences. Break down complex ideas into simple, digestible parts. The goal is clarity and sounding natural.
+*   **Short, Punchy Sentences:** Mix sentence lengths, but favor shorter ones. This makes the story easier to tell and for the listener to follow.
+*   **NO FORMAL ESSAY TONE:** This is critical. The tone should be professional but relaxed and conversational. Read it aloud in your "mind" before finalizing; if it sounds like a textbook or a written report, rewrite it.`;
 
         const contents = `
             **User's Experience (The Facts):**
