@@ -1,32 +1,75 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { generateAnswerStream } from './services/geminiService';
-import { MicrophoneIcon, SparklesIcon, ExclamationTriangleIcon } from './components/Icons';
+import { generateAnswerStream, generateSpeech } from './services/geminiService';
+import { MicrophoneIcon, SparklesIcon, ExclamationTriangleIcon, StopCircleIcon, SpeakerIcon } from './components/Icons';
 
 // Helper to check for SpeechRecognition API
 // Fix: Cast window to `any` to access non-standard browser APIs without TypeScript errors.
 const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 const isSpeechRecognitionSupported = !!SpeechRecognition;
 
+// From Gemini API documentation for decoding raw PCM audio data.
+function decode(base64: string): Uint8Array {
+  const binaryString = atob(base64);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
+}
+
+async function decodeAudioData(
+  data: Uint8Array,
+  ctx: AudioContext,
+  sampleRate: number,
+  numChannels: number,
+): Promise<AudioBuffer> {
+  const dataInt16 = new Int16Array(data.buffer);
+  const frameCount = dataInt16.length / numChannels;
+  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
+
+  for (let channel = 0; channel < numChannels; channel++) {
+    const channelData = buffer.getChannelData(channel);
+    for (let i = 0; i < frameCount; i++) {
+      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
+    }
+  }
+  return buffer;
+}
+
+
 const App: React.FC = () => {
     const [currentScreen, setCurrentScreen] = useState<'experience' | 'interview'>('experience');
     const [userExperience, setUserExperience] = useState<string>('');
-    const [transcribedQuestion, setTranscribedQuestion] = useState<string>('');
+    const [finalTranscript, setFinalTranscript] = useState<string>('');
+    const [interimTranscript, setInterimTranscript] = useState<string>('');
     const [generatedAnswer, setGeneratedAnswer] = useState<string>('');
     const [isListening, setIsListening] = useState<boolean>(false);
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
 
+    const [isGeneratingSpeech, setIsGeneratingSpeech] = useState<boolean>(false);
+    const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
+    const audioContextRef = useRef<AudioContext | null>(null);
+    const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
+
     // Fix: Use `any` for the ref type to avoid a conflict between the `SpeechRecognition` constant and the `SpeechRecognition` interface type.
     const recognitionRef = useRef<any | null>(null);
 
-    // Refs to hold the latest state and callback to avoid stale closures in event handlers
-    const transcribedQuestionRef = useRef(transcribedQuestion);
-    useEffect(() => {
-        transcribedQuestionRef.current = transcribedQuestion;
-    }, [transcribedQuestion]);
+    // Ref to hold the latest full transcript for use in the onend handler, avoiding stale state.
+    const fullTranscriptRef = useRef('');
+
+    const handleStopAudio = useCallback(() => {
+        if (audioSourceRef.current) {
+            audioSourceRef.current.stop();
+            // onended will handle the state cleanup
+        }
+    }, []);
+
 
     const handleGenerateAnswer = useCallback(async (question: string) => {
-        if (!question.trim()) {
+        const trimmedQuestion = question.trim();
+        if (!trimmedQuestion) {
             setIsLoading(false);
             return;
         }
@@ -38,11 +81,12 @@ const App: React.FC = () => {
         setError(null);
         setIsLoading(true);
         setGeneratedAnswer('');
+        handleStopAudio();
 
         try {
             await generateAnswerStream(
                 userExperience,
-                question,
+                trimmedQuestion,
                 (chunk: string) => {
                     setGeneratedAnswer(prev => prev + chunk);
                 }
@@ -52,7 +96,7 @@ const App: React.FC = () => {
         } finally {
             setIsLoading(false);
         }
-    }, [userExperience]);
+    }, [userExperience, handleStopAudio]);
 
     const handleGenerateAnswerRef = useRef(handleGenerateAnswer);
     useEffect(() => {
@@ -70,13 +114,16 @@ const App: React.FC = () => {
             recognition.onstart = () => {
                 setIsListening(true);
                 setError(null);
-                setTranscribedQuestion('');
+                setFinalTranscript('');
+                setInterimTranscript('');
+                fullTranscriptRef.current = '';
                 setGeneratedAnswer('');
+                handleStopAudio();
             };
 
             recognition.onend = () => {
                 setIsListening(false);
-                handleGenerateAnswerRef.current(transcribedQuestionRef.current);
+                handleGenerateAnswerRef.current(fullTranscriptRef.current);
             };
 
             recognition.onerror = (event: any) => {
@@ -85,11 +132,21 @@ const App: React.FC = () => {
             };
 
             recognition.onresult = (event: any) => {
-                let fullTranscript = '';
+                let final_transcript = '';
+                let interim_transcript = '';
+
                 for (let i = 0; i < event.results.length; i++) {
-                    fullTranscript += event.results[i][0].transcript;
+                    const transcript = event.results[i][0].transcript;
+                    if (event.results[i].isFinal) {
+                        final_transcript += transcript;
+                    } else {
+                        interim_transcript += transcript;
+                    }
                 }
-                setTranscribedQuestion(fullTranscript);
+                
+                setFinalTranscript(final_transcript);
+                setInterimTranscript(interim_transcript);
+                fullTranscriptRef.current = final_transcript + interim_transcript;
             };
 
             recognitionRef.current = recognition;
@@ -97,11 +154,14 @@ const App: React.FC = () => {
              setError("Speech recognition is not supported in this browser. Please use Chrome or another supported browser.");
         }
 
-        // Cleanup function to stop recognition if component unmounts
+        // Cleanup function to stop recognition and audio
         return () => {
             recognitionRef.current?.stop();
+            handleStopAudio();
         };
-    }, [currentScreen]);
+    }, [currentScreen, handleStopAudio]);
+
+
 
     const toggleListening = () => {
         if (!isSpeechRecognitionSupported || isLoading) return;
@@ -121,6 +181,55 @@ const App: React.FC = () => {
         setError(null); // Clear any errors before switching screens
         setCurrentScreen('interview');
     };
+
+    const getAudioContext = () => {
+        if (!audioContextRef.current) {
+            audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+        }
+        return audioContextRef.current;
+    };
+
+    const handlePlayAudio = async () => {
+        if (isSpeaking) {
+            handleStopAudio();
+            return;
+        }
+
+        if (!generatedAnswer) return;
+
+        setIsGeneratingSpeech(true);
+        setError(null);
+
+        try {
+            const base64Audio = await generateSpeech(generatedAnswer);
+            const audioContext = getAudioContext();
+            
+            const audioBytes = decode(base64Audio);
+            const audioBuffer = await decodeAudioData(audioBytes, audioContext, 24000, 1);
+
+            handleStopAudio(); // Stop any previous audio
+
+            const source = audioContext.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(audioContext.destination);
+            source.onended = () => {
+                setIsSpeaking(false);
+                if (audioSourceRef.current === source) {
+                    audioSourceRef.current = null;
+                }
+            };
+            source.start();
+
+            audioSourceRef.current = source;
+            setIsSpeaking(true);
+
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to play audio.');
+        } finally {
+            setIsGeneratingSpeech(false);
+        }
+    };
+
 
     return (
         <div className="min-h-screen bg-slate-900 text-slate-100 font-sans p-4 sm:p-6 md:p-8">
@@ -209,10 +318,28 @@ const App: React.FC = () => {
 
                              {/* Suggested Answer Box */}
                             <div className={`min-h-[20rem] flex flex-col bg-slate-800 rounded-lg p-4 border shadow-lg transition-all duration-500 ${!isLoading && generatedAnswer ? 'border-purple-500/70 shadow-purple-500/30' : 'border-slate-700'}`}>
-                                <label className="block text-sm font-semibold text-slate-400 mb-2 flex items-center gap-2 flex-shrink-0">
-                                    <SparklesIcon className="text-purple-400"/>
-                                    Suggested Story:
-                                </label>
+                                <div className="flex-shrink-0 flex items-center justify-between mb-2">
+                                    <label className="block text-sm font-semibold text-slate-400 flex items-center gap-2">
+                                        <SparklesIcon className="text-purple-400"/>
+                                        Suggested Story:
+                                    </label>
+                                    {!isLoading && generatedAnswer && (
+                                        <button
+                                            onClick={handlePlayAudio}
+                                            disabled={isGeneratingSpeech}
+                                            className="p-2 rounded-full text-slate-400 hover:bg-slate-700 hover:text-cyan-300 transition-colors disabled:opacity-50 disabled:cursor-wait"
+                                            aria-label={isSpeaking ? "Stop audio" : "Play suggested story"}
+                                        >
+                                            {isGeneratingSpeech ? (
+                                                <SparklesIcon className="w-6 h-6 animate-spin text-cyan-400" />
+                                            ) : isSpeaking ? (
+                                                <StopCircleIcon className="w-6 h-6 text-red-500" />
+                                            ) : (
+                                                <SpeakerIcon className="w-6 h-6" />
+                                            )}
+                                        </button>
+                                    )}
+                                </div>
                                 <div className="flex-grow w-full text-slate-300 overflow-y-auto p-2 whitespace-pre-wrap">
                                     {isLoading && !generatedAnswer && (
                                         <div className="flex items-center gap-3 text-cyan-300">
@@ -230,8 +357,15 @@ const App: React.FC = () => {
                                 <label className="block text-sm font-semibold text-slate-400 mb-2 flex-shrink-0">
                                     Interviewer Said:
                                 </label>
-                                <div className="flex-grow w-full text-slate-300 overflow-y-auto p-2">
-                                    {transcribedQuestion || <span className="text-slate-500">Waiting for question...</span>}
+                                <div className="flex-grow w-full overflow-y-auto p-2">
+                                    {finalTranscript || interimTranscript ? (
+                                        <>
+                                            <span className="text-slate-300">{finalTranscript}</span>
+                                            <span className="text-slate-500">{interimTranscript}</span>
+                                        </>
+                                     ) : (
+                                        <span className="text-slate-500">Waiting for question...</span>
+                                     )}
                                 </div>
                             </div>
                         </div>
