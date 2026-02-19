@@ -1,6 +1,6 @@
 {
-  "name": "AI-Pilot for Interviews",
-  "description": "Your creative partner for interviews. Provide the facts from your experience, and the AI will invent a compelling story to help you ace your next interview.",
+  "name": "Live Interview Co-Pilot",
+  "description": "Real-time AI assistant for interviews. Join a meeting room and get human-sounding coaching whispered in your ear as the interviewer speaks.",
   "requestFramePermissions": [
     "microphone"
   ]

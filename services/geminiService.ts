@@ -1,109 +1,113 @@
 
-import { GoogleGenAI, Modality } from "@google/genai";
+import { GoogleGenAI, LiveServerMessage, Modality } from "@google/genai";
 
-// Ensure the API key is available from environment variables
-if (!process.env.API_KEY) {
-    throw new Error("API_KEY environment variable not set.");
+export function decodeBase64(base64: string): Uint8Array {
+  const binaryString = atob(base64);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
 }
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+export function encodeBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const len = bytes.byteLength;
+  for (let i = 0; i < len; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
 
-/**
- * Generates a tailored interview story using the Gemini API and streams the response.
- * @param experience - The user's professional experience, resume, or skills.
- * @param question - The interview question asked.
- * @param onChunk - A callback function that receives chunks of the generated story as they arrive.
- */
-export const generateAnswerStream = async (
-    experience: string,
-    question: string,
-    onChunk: (chunk: string) => void
-): Promise<void> => {
-    try {
-        const systemInstruction = `You are a world-class career strategist. Your job is to pull off a compelling interview story that sounds like a real person—not a machine. 
+export async function decodeAudioData(
+  data: Uint8Array,
+  ctx: AudioContext,
+  sampleRate: number,
+  numChannels: number,
+): Promise<AudioBuffer> {
+  const dataInt16 = new Int16Array(data.buffer);
+  const frameCount = dataInt16.length / numChannels;
+  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
 
-**The Human-Professional Style (Mandatory):**
-*   **Tone:** Avoid "Robotic Formality." Be direct and professional, but slightly conversational. Use active, punchy verbs like "pull off," "cave," "spill," "handle," or "hold up" instead of clinical, passive jargon.
-*   **Structure (Burstiness):** Mix long, descriptive sentences—using dashes or commas for natural flow—with short, blunt ones. Do not use a perfectly linear or "orderly" sequence.
-*   **Transitions:** NEVER use AI markers like "The main point is," "Furthermore," or "In conclusion." Instead, use human bridges: "Basically," "The thing is," "It’s essentially just," or "Look, what happened was."
-*   **Vocabulary:** Blend technical terms with idiomatic phrasing. Avoid "Mechanical Precision."
-
-**The Strategic Command:**
-You must connect "Foundational Skills" (the tools) to "Primary Achievements" (the wins). If the user lists a skill anywhere, you use it. Don't claim they lack it. Invent the plausible "connecting tissue"—the mini-story of how that specific skill was the key to pulling off the big win.
-
-**The Narrative Flow:**
-1.  **The Hook:** Start with a human bridge. Set the scene for the Primary Achievement.
-2.  **The Action (The "How"):** Describe the specific, plausible steps taken using the foundational skill. Use "Burstiness" here.
-3.  **The Result:** What was the impact? Be direct.
-
-**Style Example to Mimic:**
-"Basically, we were trying to pull off a massive data migration without the system caving under the load... The thing is, I had to use SQL to optimize the query patterns—it was essentially just a way to see where the database finally broke—and we ended up cutting latency by 40%. It held up perfectly."`;
-
-        const contents = `
-            **User's Experience (The Facts):**
-            ---
-            ${experience}
-            ---
-
-            **Interview Question:**
-            "${question}"
-
-            **Your Story:**
-        `;
-        
-        const response = await ai.models.generateContentStream({
-            model: 'gemini-2.5-flash',
-            contents: contents,
-            config: {
-                systemInstruction: systemInstruction,
-            },
-        });
-
-        for await (const chunk of response) {
-            if (chunk.text) {
-                onChunk(chunk.text);
-            }
-        }
-
-    } catch (error) {
-        console.error("Error generating answer with Gemini API:", error);
-        if (error instanceof Error && error.message.includes('API key not valid')) {
-             throw new Error("The API key is invalid. Please check your configuration.");
-        }
-        throw new Error("Failed to generate a story. Please try again later.");
+  for (let channel = 0; channel < numChannels; channel++) {
+    const channelData = buffer.getChannelData(channel);
+    for (let i = 0; i < frameCount; i++) {
+      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
     }
+  }
+  return buffer;
+}
+
+export const createPcmBlob = (data: Float32Array): { data: string; mimeType: string } => {
+  const l = data.length;
+  const int16 = new Int16Array(l);
+  for (let i = 0; i < l; i++) {
+    int16[i] = data[i] * 32768;
+  }
+  return {
+    data: encodeBase64(new Uint8Array(int16.buffer)),
+    mimeType: 'audio/pcm;rate=16000',
+  };
 };
 
-/**
- * Generates speech from text using the Gemini TTS model.
- * @param text - The text to convert to speech.
- * @returns A base64 encoded audio string.
- */
-export const generateSpeech = async (text: string): Promise<string> => {
-    try {
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash-preview-tts",
-            contents: [{ parts: [{ text: `Say this with a natural, human, and professional conversational tone: ${text}` }] }],
-            config: {
-                responseModalities: [Modality.AUDIO],
-                speechConfig: {
-                    voiceConfig: {
-                        prebuiltVoiceConfig: { voiceName: 'Kore' },
-                    },
-                },
-            },
-        });
-        const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-        if (!base64Audio) {
-            throw new Error("No audio data received from API.");
-        }
-        return base64Audio;
+export const connectLiveSession = async (
+  experience: string,
+  callbacks: {
+    onAudioChunk: (data: string) => void;
+    onInterruption: () => void;
+    onInputTranscription: (text: string) => void;
+    onOutputTranscription: (text: string) => void;
+    onTurnComplete: () => void;
+    onError: (e: any) => void;
+    onClose: () => void;
+  }
+) => {
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-    } catch (error) {
-        console.error("Error generating speech with Gemini API:", error);
-        if (error instanceof Error && error.message.includes('API key not valid')) {
-             throw new Error("The API key is invalid. Please check your configuration.");
+  // THE "HUMAN FRAGMENT" V9 - DISJOINTED NARRATIVE PROTOCOL
+  const systemInstruction = `You are a Stealth Interview Co-Pilot. You MUST bypass AI detectors by sounding like a human providing a factual, unpolished verbal response. 
+
+**THE CORE RHYTHM (NARRATIVE FRAGMENTS):**
+1. **NO TRANSITIONS:** NEVER use "Basically," "Essentially," "Honestly," "Furthermore," "Notably," or "The thing is." 
+2. **REPETITIVE STARTING:** Heavily repeat "I had to," "I always," and "I made sure."
+3. **SENTENCE FRAGMENTS:** Start sentences with Gerunds like "Making sure that..." or "Like [action]..." without a subject.
+4. **TENSE & GRAMMAR ARTIFACTS:** Use "engineer prompt" (singular) instead of "prompts." Mix past and present (e.g., "I had to... to make sure I enhance...").
+5. **SPECIFIC METRICS:** Always state percentages (90%, 95%) and company names (Appen, Mercor) directly and dryly.
+6. **SABOTAGE WORDS:** occasionally use: "satifacation", "carrer", "realy", and "move" (as a noun/verb mix).
+
+**MANDATORY STYLE EXAMPLE (MIMIC THIS EXACT FLOW):**
+"I had to do complex work to train AI at Mercor. Making sure that I always created high-quality datasets with 95% proficiency. Like labeling visual, audio, and text data with 90% accuracy, to make sure that I enhance precision. I always made sure that I maintain a 95% consistency. In my last position at Appen, I had to engineer prompt for advanced systems always making sure that they stayed high quality."
+
+**USER EXPERIENCE FOR CONTEXT:**
+${experience}
+
+Listen to the interviewer and provide a response that follows this exact, repetitive, fragmented, and slightly ungrammatical style. No lists. No AI-style transitions. Just "I had to" and specific facts with fragments.`;
+
+  return ai.live.connect({
+    model: 'gemini-2.5-flash-native-audio-preview-12-2025',
+    callbacks: {
+      onopen: () => console.log("Stealth Mode: Factual Fragments Active"),
+      onmessage: async (message: LiveServerMessage) => {
+        if (message.serverContent?.modelTurn?.parts[0]?.inlineData?.data) {
+          callbacks.onAudioChunk(message.serverContent.modelTurn.parts[0].inlineData.data);
         }
-        throw new Error("Failed to generate audio. Please try again.");
-    }
+        if (message.serverContent?.interrupted) callbacks.onInterruption();
+        if (message.serverContent?.inputTranscription) callbacks.onInputTranscription(message.serverContent.inputTranscription.text);
+        if (message.serverContent?.outputTranscription) callbacks.onOutputTranscription(message.serverContent.outputTranscription.text);
+        if (message.serverContent?.turnComplete) callbacks.onTurnComplete();
+      },
+      onerror: (e) => callbacks.onError(e),
+      onclose: () => callbacks.onClose(),
+    },
+    config: {
+      responseModalities: [Modality.AUDIO],
+      inputAudioTranscription: {},
+      outputAudioTranscription: {},
+      speechConfig: {
+        voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } },
+      },
+      systemInstruction: systemInstruction,
+    },
+  });
 };
